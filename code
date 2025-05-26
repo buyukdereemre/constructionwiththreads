@@ -1,0 +1,77 @@
+#include <stdio.h>          // Giriş/çıkış işlemleri için
+#include <stdlib.h>         // Genel amaçlı fonksiyonlar için
+#include <unistd.h>         // Unix sistem çağrıları (sleep, fork vs.) için
+#include <pthread.h>        // Thread işlemleri için
+#include <sys/wait.h>       // waitpid() için
+#include <semaphore.h>      // Semafor kullanımı için
+#include <time.h>           // Zaman işlemleri için (rand seed)
+#define TOTAL_FLOORS 10     // Toplam kat sayısı
+#define ROOMS_PER_FLOOR 4   // Her katta bulunan daire sayısı
+// Ortak kaynaklara erişimi kontrol etmek için semaforlar tanımlanıyor
+sem_t plumbing_sem;         // Su tesisatı için semafor
+sem_t electric_sem;         // Elektrik tesisatı için semafor
+sem_t crane_sem;            // Vinç erişimi için semafor
+// Rastgele süreli işlemler için yardımcı fonksiyon
+void random_sleep(const char* islem, int room_number, int min, int max) {
+    int sure = min + rand() % (max - min + 1);     // Belirli aralıkta rastgele süre
+    printf("\t[Daire %d] %s (%ds)...\n", room_number, islem, sure);  // İşlem çıktısı
+    sleep(sure);                                   // Belirtilen süre kadar bekle
+}
+// Her daire için inşaat işlemleri burada yapılır
+void* build_room(void* arg) {
+    int room_number = *((int*)arg);                // Daire numarasını al
+    srand(time(NULL) + room_number);               // Her thread için farklı random seed
+    printf("\t[Daire %d] Temel işlemleri başladı.\n", room_number);  // Başlangıç mesajı
+    sem_wait(&crane_sem);                          // Vinç kullanımı için kilit al
+    random_sleep("Vinç ile ağır malzeme taşıma", room_number, 1, 3); // Vinç işlemi
+    sem_post(&crane_sem);                          // Vinç kilidini bırak
+    random_sleep("Yapı zeminini iyileştirme", room_number, 1, 2);     // Zemin iyileştirme
+    random_sleep("Duvar ve pencere yapımı", room_number, 1, 2);       // Duvar & pencere
+    sem_wait(&plumbing_sem);                       // Su tesisatı için kilit al
+    random_sleep("Su tesisatı döşeme", room_number, 1, 2);            // Su tesisatı
+    sem_post(&plumbing_sem);                       // Su tesisatı kilidini bırak
+    sem_wait(&electric_sem);                       // Elektrik tesisatı için kilit al
+    random_sleep("Elektrik tesisatı döşeme", room_number, 1, 2);      // Elektrik tesisatı
+    sem_post(&electric_sem);                       // Elektrik kilidini bırak
+    random_sleep("İç ve dış yüzeylerin boyanması", room_number, 1, 2); // Boya işlemi
+    random_sleep("Son kontrol çalışmaları", room_number, 1, 2);         // Son kontroller
+    printf("\t[Daire %d] Tüm inşaat işlemleri tamamlandı \n", room_number); // Tamamlandı mesajı
+    free(arg);                                     // Bellek temizliği
+    return NULL;                                   // Thread sonu
+}
+// Kat inşaatı burada yapılır
+void build_floor(int floor) {
+    printf("\n[Kat %d] inşaatı başlıyor \n", floor); // Kat başlangıcı
+    pthread_t threads[ROOMS_PER_FLOOR];                // Kat için thread dizisi
+    for (int i = 0; i < ROOMS_PER_FLOOR; i++) {        // Her daire için thread başlat
+        int* room_number = malloc(sizeof(int));        // Daire numarası için bellek ayır
+        *room_number = (floor - 1) * ROOMS_PER_FLOOR + i + 1; // Daire numarasını hesapla
+        pthread_create(&threads[i], NULL, build_room, room_number); // Thread başlat
+    }
+    for (int i = 0; i < ROOMS_PER_FLOOR; i++) {        // Tüm thread’lerin tamamlanmasını bekle
+        pthread_join(threads[i], NULL);                // Thread’lerin bitmesini bekle
+    }
+    printf("[Kat %d] inşaatı tamamlandı \n", floor);  // Kat tamamlandı mesajı
+}
+int main() {
+    sem_init(&plumbing_sem, 1, 1);   // Su tesisatı semaforu başlat
+    sem_init(&electric_sem, 1, 1);   // Elektrik tesisatı semaforu başlat
+    sem_init(&crane_sem, 1, 1);      // Vinç semaforu başlat
+    printf(" Temel atılıyor...\n"); // Temel atılıyor mesajı
+    sleep(2);                         // Temel atma süresi
+    printf(" Temel tamamlandı. Kat inşaatlarına geçiliyor...\n"); // Temel tamamlandı
+    for (int i = 1; i <= TOTAL_FLOORS; i++) {          // Her kat için işlem başlat
+        pid_t pid = fork();                            // Her kat için yeni process oluştur
+        if (pid == 0) {                                // Çocuk process (kat işlemi)
+            build_floor(i);                            // Kat inşaatını başlat
+            exit(0);                                   // Kat işlemi tamamlandıktan sonra çık
+        } else {
+            waitpid(pid, NULL, 0);                     // Ebeveyn, kat tamamlanana kadar bekler
+        }
+    }
+    sem_destroy(&plumbing_sem);       // Su tesisatı semaforunu yok et
+    sem_destroy(&electric_sem);       // Elektrik semaforunu yok et
+    sem_destroy(&crane_sem);          // Vinç semaforunu yok et
+    printf("\n Apartman inşaatı başarıyla tamamlandı! \n"); // İnşaat tamamlandı mesajı
+    return 0;                           // Program sonu
+}
